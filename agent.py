@@ -8,16 +8,26 @@ import urllib.request
 import urllib.parse
 
 class CodingAgent:
-    def __init__(self, filename):
+    def __init__(self, filename, verbose=False):
         self.conversation = []
         self.filename = filename
+        self.verbose = verbose
+
+    def log_tool(self, message):
+        """Log tool-related activity"""
+        if self.verbose:
+            print(f"[TOOL] {message}")
 
     def generate_random_number(self, min_val=1, max_val=100):
         """Tool: Generate a random number between min_val and max_val"""
-        return random.randint(min_val, max_val)
+        result = random.randint(min_val, max_val)
+        self.log_tool(f"generate_random_number({min_val}, {max_val}) -> {result}")
+        return result
 
     def execute_tool(self, tool_name, parameters):
         """Execute a tool and return the result"""
+        self.log_tool(f"Executing tool: {tool_name} with params: {parameters}")
+
         if tool_name == "generate_random_number":
             min_val = parameters.get("min_val", 1)
             max_val = parameters.get("max_val", 100)
@@ -72,8 +82,13 @@ class CodingAgent:
         with urllib.request.urlopen(req) as response:
             result = json.loads(response.read().decode('utf-8'))
 
+            if self.verbose:
+                print(f"[DEBUG] Response type: {result['content'][0]['type']}")
+
             # Handle tool use
             if result["content"][0]["type"] == "tool_use":
+                self.log_tool("Claude requested tool use")
+
                 tool_call = result["content"][0]
                 tool_name = tool_call["name"]
                 tool_params = tool_call["input"]
@@ -97,9 +112,14 @@ class CodingAgent:
                     ]
                 })
 
+                self.log_tool(f"Tool result sent back to Claude: {tool_result}")
+
                 # Make another API call to get final response
                 return self.call_claude_continue()
             else:
+                if self.verbose:
+                    print("[DEBUG] Claude responded with text, no tool use")
+
                 assistant_response = result["content"][0]["text"]
                 self.conversation.append({"role": "assistant", "content": assistant_response})
                 return assistant_response
@@ -135,6 +155,8 @@ class CodingAgent:
 
     def run(self):
         print(f"Claude Coding Agent - Working on: {self.filename}")
+        if self.verbose:
+            print("Verbose mode enabled - tool logging active")
         print("Enter your prompt (or 'quit' to exit):")
 
         while True:
@@ -151,12 +173,14 @@ class CodingAgent:
                 print(f"Error: {e}")
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: python3 agent.py <filename>")
+    if len(sys.argv) < 2:
+        print("Usage: python3 agent.py <filename> [-v|--verbose]")
         sys.exit(1)
 
     filename = sys.argv[1]
-    agent = CodingAgent(filename)
+    verbose = len(sys.argv) > 2 and sys.argv[2] in ['-v', '--verbose']
+
+    agent = CodingAgent(filename, verbose)
     agent.run()
 
 if __name__ == "__main__":
