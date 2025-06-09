@@ -8,6 +8,7 @@ import urllib.request
 import urllib.parse
 import time
 import traceback
+import subprocess
 from datetime import datetime
 
 MAX_TOKENS = 1024 * 10
@@ -122,12 +123,60 @@ When you suggest changes to the code, please use the write_file tool to update t
         
         self.log_tool(f"run_script({script_path}, {args}) -> Starting execution")
         
-        # TODO: Implement actual script execution
-        # This will use subprocess to run the Python script and capture output
-        result = f"[PLACEHOLDER] Would run: python3 {script_path} {' '.join(args)}"
+        # Check if the script file exists
+        if not os.path.exists(script_path):
+            error_msg = f"Script file not found: {script_path}"
+            self.log_tool(error_msg)
+            return error_msg
         
-        self.log_tool(f"run_script({script_path}) -> {result}")
-        return result
+        try:
+            # Build the command
+            cmd = [sys.executable, script_path] + args
+            
+            # Run the script with a timeout to prevent hanging
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,  # 30 second timeout
+                cwd=os.path.dirname(os.path.abspath(script_path)) or '.'
+            )
+            
+            # Format the output
+            output_parts = []
+            
+            if result.stdout:
+                output_parts.append(f"STDOUT:\n{result.stdout}")
+            
+            if result.stderr:
+                output_parts.append(f"STDERR:\n{result.stderr}")
+            
+            output_parts.append(f"EXIT CODE: {result.returncode}")
+            
+            if result.returncode == 0:
+                status = "SUCCESS"
+            else:
+                status = "FAILED"
+            
+            output_parts.insert(0, f"EXECUTION {status}")
+            
+            final_output = "\n".join(output_parts)
+            
+            self.log_tool(f"run_script({script_path}) -> Exit code: {result.returncode}")
+            return final_output
+            
+        except subprocess.TimeoutExpired:
+            error_msg = f"Script execution timed out after 30 seconds: {script_path}"
+            self.log_tool(error_msg)
+            return error_msg
+        except FileNotFoundError:
+            error_msg = f"Python interpreter not found. Make sure Python is installed and accessible."
+            self.log_tool(error_msg)
+            return error_msg
+        except Exception as e:
+            error_msg = f"Error running script {script_path}: {str(e)}"
+            self.log_tool(error_msg)
+            return error_msg
 
     def execute_tool(self, tool_name, parameters):
         """Execute a tool and return the result"""
