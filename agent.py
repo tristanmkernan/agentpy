@@ -31,12 +31,27 @@ class CodingAgent:
         }
         self.api_logs.append(log_entry)
 
-        # Write to file immediately
         try:
             with open(self.log_file, 'w') as f:
                 json.dump(self.api_logs, f, indent=2)
         except Exception as e:
             print(f"Failed to write log: {e}")
+
+    def read_file(self, filepath):
+        """Tool: Read contents of a file"""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.log_tool(f"read_file({filepath}) -> {len(content)} characters")
+            return content
+        except FileNotFoundError:
+            error_msg = f"File not found: {filepath}"
+            self.log_tool(error_msg)
+            return error_msg
+        except Exception as e:
+            error_msg = f"Error reading file {filepath}: {str(e)}"
+            self.log_tool(error_msg)
+            return error_msg
 
     def generate_random_number(self, min_val=1, max_val=100):
         """Tool: Generate a random number between min_val and max_val"""
@@ -48,7 +63,10 @@ class CodingAgent:
         """Execute a tool and return the result"""
         self.log_tool(f"Executing tool: {tool_name} with params: {parameters}")
 
-        if tool_name == "generate_random_number":
+        if tool_name == "read_file":
+            filepath = parameters.get("filepath", "")
+            return self.read_file(filepath)
+        elif tool_name == "generate_random_number":
             min_val = parameters.get("min_val", 1)
             max_val = parameters.get("max_val", 100)
             return self.generate_random_number(min_val, max_val)
@@ -67,6 +85,17 @@ class CodingAgent:
         url = "https://api.anthropic.com/v1/messages"
 
         tools = [
+            {
+                "name": "read_file",
+                "description": "Read the contents of a file",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "filepath": {"type": "string", "description": "Path to the file to read"}
+                    },
+                    "required": ["filepath"]
+                }
+            },
             {
                 "name": "generate_random_number",
                 "description": "Generate a random number between min_val and max_val",
@@ -89,11 +118,10 @@ class CodingAgent:
 
         headers = {
             "Content-Type": "application/json",
-            "x-api-key": "[REDACTED]",  # For logging
+            "x-api-key": "[REDACTED]",
             "anthropic-version": "2023-06-01"
         }
 
-        # Prepare request for logging (without real API key)
         log_request = {
             "url": url,
             "headers": headers,
@@ -103,13 +131,11 @@ class CodingAgent:
         req = urllib.request.Request(
             url,
             data=json.dumps(data).encode('utf-8'),
-            headers={**headers, "x-api-key": api_key}  # Use real key for actual request
+            headers={**headers, "x-api-key": api_key}
         )
 
         with urllib.request.urlopen(req) as response:
             result = json.loads(response.read().decode('utf-8'))
-
-            # Log this API call
             self.log_api_call(log_request, result, "main")
 
             if self.verbose:
@@ -131,18 +157,19 @@ class CodingAgent:
             if tool_calls:
                 self.log_tool(f"Claude requested {len(tool_calls)} tool(s)")
 
-                # Execute all tool calls and collect results
-                tool_results = []
-                for tool_call in tool_calls:
-                    tool_result = self.execute_tool(tool_call["name"], tool_call["input"])
-                    tool_results.append({
+                # Execute first tool call only (avoiding multi-tool complexity)
+                tool_call = tool_calls[0]
+                tool_result = self.execute_tool(tool_call["name"], tool_call["input"])
+
+                # Add tool result
+                self.conversation.append({
+                    "role": "user",
+                    "content": [{
                         "type": "tool_result",
                         "tool_use_id": tool_call["id"],
                         "content": str(tool_result)
-                    })
-
-                # Add tool results
-                self.conversation.append({"role": "user", "content": tool_results})
+                    }]
+                })
 
                 # Continue conversation
                 return self.call_claude_continue()
@@ -167,7 +194,6 @@ class CodingAgent:
             "anthropic-version": "2023-06-01"
         }
 
-        # Prepare request for logging
         log_request = {
             "url": url,
             "headers": headers,
@@ -182,17 +208,13 @@ class CodingAgent:
 
         with urllib.request.urlopen(req) as response:
             result = json.loads(response.read().decode('utf-8'))
-
-            # Log this API call
             self.log_api_call(log_request, result, "continue")
 
-            # Handle empty content array
             if not result["content"]:
                 if self.verbose:
                     print("[DEBUG] Empty content in continue response")
                 return "Tool execution completed."
 
-            # Extract text from content blocks
             text_parts = []
             for content_block in result["content"]:
                 if content_block["type"] == "text":
