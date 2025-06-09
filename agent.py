@@ -9,6 +9,7 @@ import urllib.parse
 import time
 import traceback
 import subprocess
+import webbrowser
 from datetime import datetime
 
 MAX_TOKENS = 1024 * 10
@@ -117,6 +118,17 @@ When you suggest changes to the code, please use the write_file tool to update t
                         "script_path": {"type": "string", "description": "Path to the Python script to run (optional, defaults to the file being edited)"},
                         "args": {"type": "array", "items": {"type": "string"}, "description": "Command line arguments to pass to the script (optional)"}
                     }
+                }
+            },
+            {
+                "name": "open_browser",
+                "description": "Open a URL in the default web browser",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "The URL to open in the browser"}
+                    },
+                    "required": ["url"]
                 }
             }
         ]
@@ -227,6 +239,25 @@ When you suggest changes to the code, please use the write_file tool to update t
             self.log_tool(error_msg)
             return error_msg
 
+    def open_browser(self, url):
+        """Tool: Open a URL in the default web browser"""
+        try:
+            # Ensure URL has a scheme (add https:// if missing)
+            if not url.startswith(('http://', 'https://', 'file://')):
+                url = 'https://' + url
+            
+            self.log_tool(f"open_browser({url}) -> Opening URL in default browser")
+            
+            # Use webbrowser module to open URL
+            webbrowser.open(url)
+            
+            return f"Successfully opened {url} in default browser"
+            
+        except Exception as e:
+            error_msg = f"Error opening browser for URL {url}: {str(e)}"
+            self.log_tool(error_msg)
+            return error_msg
+
     def execute_tool(self, tool_name, parameters):
         """Execute a tool and return the result"""
         self.log_tool(f"Executing tool: {tool_name} with params: {parameters}")
@@ -250,6 +281,9 @@ When you suggest changes to the code, please use the write_file tool to update t
             script_path = parameters.get("script_path")
             args = parameters.get("args", [])
             return self.run_script(script_path, args)
+        elif tool_name == "open_browser":
+            url = parameters.get("url", "")
+            return self.open_browser(url)
         else:
             raise Exception(f"Unknown tool: {tool_name}")
 
