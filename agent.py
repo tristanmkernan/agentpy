@@ -72,6 +72,55 @@ When you suggest changes to the code, please use the write_file tool to update t
         # Return system message + conversation history
         return [system_message] + self.conversation
 
+    def get_tools_definition(self):
+        """Get the tools definition for the API"""
+        return [
+            {
+                "name": "write_file",
+                "description": f"Write complete contents to {self.filename}. Always provide the entire file content, not partial updates.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "Complete file contents to write"}
+                    },
+                    "required": ["content"]
+                }
+            },
+            {
+                "name": "read_file",
+                "description": "Read the contents of a file",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "filepath": {"type": "string", "description": "Path to the file to read"}
+                    },
+                    "required": ["filepath"]
+                }
+            },
+            {
+                "name": "generate_random_number",
+                "description": "Generate a random number between min_val and max_val",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "min_val": {"type": "integer", "description": "Minimum value (default: 1)"},
+                        "max_val": {"type": "integer", "description": "Maximum value (default: 100)"}
+                    }
+                }
+            },
+            {
+                "name": "run_script",
+                "description": "Run a Python script and return the output. If no script_path is provided, runs the file being edited.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "script_path": {"type": "string", "description": "Path to the Python script to run (optional, defaults to the file being edited)"},
+                        "args": {"type": "array", "items": {"type": "string"}, "description": "Command line arguments to pass to the script (optional)"}
+                    }
+                }
+            }
+        ]
+
     def write_file(self, content):
         """Tool: Write complete contents to the target file"""
         try:
@@ -219,58 +268,11 @@ When you suggest changes to the code, please use the write_file tool to update t
 
             url = "https://api.anthropic.com/v1/messages"
 
-            tools = [
-                {
-                    "name": "write_file",
-                    "description": f"Write complete contents to {self.filename}. Always provide the entire file content, not partial updates.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "content": {"type": "string", "description": "Complete file contents to write"}
-                        },
-                        "required": ["content"]
-                    }
-                },
-                {
-                    "name": "read_file",
-                    "description": "Read the contents of a file",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "filepath": {"type": "string", "description": "Path to the file to read"}
-                        },
-                        "required": ["filepath"]
-                    }
-                },
-                {
-                    "name": "generate_random_number",
-                    "description": "Generate a random number between min_val and max_val",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "min_val": {"type": "integer", "description": "Minimum value (default: 1)"},
-                            "max_val": {"type": "integer", "description": "Maximum value (default: 100)"}
-                        }
-                    }
-                },
-                {
-                    "name": "run_script",
-                    "description": "Run a Python script and return the output. If no script_path is provided, runs the file being edited.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "script_path": {"type": "string", "description": "Path to the Python script to run (optional, defaults to the file being edited)"},
-                            "args": {"type": "array", "items": {"type": "string"}, "description": "Command line arguments to pass to the script (optional)"}
-                        }
-                    }
-                }
-            ]
-
             data = {
                 "model": MODEL,
                 "max_tokens": MAX_TOKENS,
                 "messages": self.get_messages_with_file_context(),
-                "tools": tools
+                "tools": self.get_tools_definition()
             }
 
             headers = {
@@ -296,11 +298,11 @@ When you suggest changes to the code, please use the write_file tool to update t
                 self.log_api_call(log_request, result, "main")
 
                 if self.verbose:
-                    print(f"[DEBUG] Response type: {result['content'][0]['type']}")
+                    print(f"[DEBUG] Response content blocks: {len(result['content'])}")
 
-                # Look for tool use in any content block
-                tool_calls = []
+                # Extract text content and tool calls from the response
                 text_content = []
+                tool_calls = []
 
                 for content_block in result["content"]:
                     if content_block["type"] == "text":
@@ -308,17 +310,31 @@ When you suggest changes to the code, please use the write_file tool to update t
                     elif content_block["type"] == "tool_use":
                         tool_calls.append(content_block)
 
-                # Add assistant message with full content
+                # Add assistant message with full content to conversation
                 self.conversation.append({"role": "assistant", "content": result["content"]})
 
+                # Collect all response parts
+                response_parts = []
+                
+                # Add text content if any
+                if text_content:
+                    combined_text = "\n".join(text_content).strip()
+                    if combined_text:
+                        response_parts.append(combined_text)
+
+                # Execute tool calls if any
                 if tool_calls:
                     self.log_tool(f"Claude requested {len(tool_calls)} tool(s)")
-
-                    # Execute first tool call only (avoiding multi-tool complexity)
+                    
+                    # For now, execute only the first tool call to keep things simple
+                    # TODO: Could be enhanced to handle multiple tool calls
                     tool_call = tool_calls[0]
+                    if len(tool_calls) > 1:
+                        self.log_tool(f"Warning: Multiple tool calls detected, executing only the first one")
+                    
                     tool_result = self.execute_tool(tool_call["name"], tool_call["input"])
 
-                    # Add tool result
+                    # Add tool result to conversation
                     self.conversation.append({
                         "role": "user",
                         "content": [{
@@ -328,11 +344,16 @@ When you suggest changes to the code, please use the write_file tool to update t
                         }]
                     })
 
-                    # Continue conversation
-                    return self.call_claude_continue()
+                    # Get Claude's follow-up response after tool execution
+                    follow_up_response = self.call_claude_continue()
+                    if follow_up_response.strip():
+                        response_parts.append(follow_up_response)
+
+                # Return combined response
+                if response_parts:
+                    return "\n\n".join(response_parts)
                 else:
-                    # Just text response
-                    return "\n".join(text_content)
+                    return "Tool execution completed."
 
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8')
