@@ -85,44 +85,40 @@ class CodingAgent:
             if self.verbose:
                 print(f"[DEBUG] Response type: {result['content'][0]['type']}")
 
-            # Handle tool use
-            if result["content"][0]["type"] == "tool_use":
-                self.log_tool("Claude requested tool use")
+            # Look for tool use in any content block
+            tool_calls = []
+            text_content = []
 
-                tool_call = result["content"][0]
-                tool_name = tool_call["name"]
-                tool_params = tool_call["input"]
-                tool_id = tool_call["id"]
+            for content_block in result["content"]:
+                if content_block["type"] == "text":
+                    text_content.append(content_block["text"])
+                elif content_block["type"] == "tool_use":
+                    tool_calls.append(content_block)
 
-                # Execute tool
-                tool_result = self.execute_tool(tool_name, tool_params)
+            # Add assistant message with full content
+            self.conversation.append({"role": "assistant", "content": result["content"]})
 
-                # Add assistant message with tool use
-                self.conversation.append({"role": "assistant", "content": result["content"]})
+            if tool_calls:
+                self.log_tool(f"Claude requested {len(tool_calls)} tool(s)")
 
-                # Add tool result
-                self.conversation.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": str(tool_result)
-                        }
-                    ]
-                })
+                # Execute all tool calls and collect results
+                tool_results = []
+                for tool_call in tool_calls:
+                    tool_result = self.execute_tool(tool_call["name"], tool_call["input"])
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_call["id"],
+                        "content": str(tool_result)
+                    })
 
-                self.log_tool(f"Tool result sent back to Claude: {tool_result}")
+                # Add tool results
+                self.conversation.append({"role": "user", "content": tool_results})
 
-                # Make another API call to get final response
+                # Continue conversation
                 return self.call_claude_continue()
             else:
-                if self.verbose:
-                    print("[DEBUG] Claude responded with text, no tool use")
-
-                assistant_response = result["content"][0]["text"]
-                self.conversation.append({"role": "assistant", "content": assistant_response})
-                return assistant_response
+                # Just text response
+                return "\n".join(text_content)
 
     def call_claude_continue(self):
         """Continue conversation after tool use"""
