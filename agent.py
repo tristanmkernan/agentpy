@@ -37,6 +37,28 @@ class CodingAgent:
         except Exception as e:
             print(f"Failed to write log: {e}")
 
+    def get_file_contents(self):
+        """Get current contents of the target file"""
+        try:
+            with open(self.filename, 'r', encoding='utf-8') as f:
+                return f.read()
+        except FileNotFoundError:
+            return f"File {self.filename} does not exist yet."
+        except Exception as e:
+            return f"Error reading {self.filename}: {str(e)}"
+
+    def get_messages_with_file_context(self):
+        """Get conversation messages with current file contents prepended"""
+        file_contents = self.get_file_contents()
+
+        system_message = {
+            "role": "user",
+            "content": f"You are working on the file: {self.filename}\n\nCurrent file contents:\n```python\n{file_contents}\n```\n\nPlease help me work on this file."
+        }
+
+        # Return system message + conversation history
+        return [system_message] + self.conversation
+
     def read_file(self, filepath):
         """Tool: Read contents of a file"""
         try:
@@ -112,7 +134,7 @@ class CodingAgent:
         data = {
             "model": "claude-3-sonnet-20240229",
             "max_tokens": 1024,
-            "messages": self.conversation,
+            "messages": self.get_messages_with_file_context(),
             "tools": tools
         }
 
@@ -185,7 +207,7 @@ class CodingAgent:
         data = {
             "model": "claude-3-sonnet-20240229",
             "max_tokens": 1024,
-            "messages": self.conversation
+            "messages": self.get_messages_with_file_context()
         }
 
         headers = {
