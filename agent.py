@@ -6,7 +6,12 @@ import json
 import random
 import urllib.request
 import urllib.parse
+import time
+import traceback
 from datetime import datetime
+
+MAX_TOKENS = 1024 * 10
+MODEL = "claude-sonnet-4-20250514"
 
 class CodingAgent:
     def __init__(self, filename, verbose=False):
@@ -69,6 +74,11 @@ When you suggest changes to the code, please use the write_file tool to update t
     def write_file(self, content):
         """Tool: Write complete contents to the target file"""
         try:
+            # Debug: log what we're about to write
+            self.log_tool(f"write_file called with content length: {len(content)}")
+            if self.verbose:
+                print(f"[DEBUG] First 100 chars of content: {repr(content[:100])}")
+
             with open(self.filename, 'w', encoding='utf-8') as f:
                 f.write(content)
             self.log_tool(f"write_file({self.filename}) -> {len(content)} characters written")
@@ -100,9 +110,33 @@ When you suggest changes to the code, please use the write_file tool to update t
         self.log_tool(f"generate_random_number({min_val}, {max_val}) -> {result}")
         return result
 
+    def run_script(self, script_path=None, args=None):
+        """Tool: Run a Python script and return the output"""
+        # Use the target file if no script_path provided
+        if script_path is None:
+            script_path = self.filename
+        
+        # Default to empty args if none provided
+        if args is None:
+            args = []
+        
+        self.log_tool(f"run_script({script_path}, {args}) -> Starting execution")
+        
+        # TODO: Implement actual script execution
+        # This will use subprocess to run the Python script and capture output
+        result = f"[PLACEHOLDER] Would run: python3 {script_path} {' '.join(args)}"
+        
+        self.log_tool(f"run_script({script_path}) -> {result}")
+        return result
+
     def execute_tool(self, tool_name, parameters):
         """Execute a tool and return the result"""
         self.log_tool(f"Executing tool: {tool_name} with params: {parameters}")
+
+        # Debug: log parameter details
+        if self.verbose:
+            print(f"[DEBUG] Tool parameters type: {type(parameters)}")
+            print(f"[DEBUG] Tool parameters keys: {list(parameters.keys()) if isinstance(parameters, dict) else 'Not a dict'}")
 
         if tool_name == "write_file":
             content = parameters.get("content", "")
@@ -114,170 +148,212 @@ When you suggest changes to the code, please use the write_file tool to update t
             min_val = parameters.get("min_val", 1)
             max_val = parameters.get("max_val", 100)
             return self.generate_random_number(min_val, max_val)
+        elif tool_name == "run_script":
+            script_path = parameters.get("script_path")
+            args = parameters.get("args", [])
+            return self.run_script(script_path, args)
         else:
             raise Exception(f"Unknown tool: {tool_name}")
 
     def call_claude(self, prompt):
         """Send prompt to Claude API with conversation history and tools"""
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-        if not api_key:
-            raise Exception("ANTHROPIC_API_KEY environment variable not set")
 
-        # Add user message to conversation
-        self.conversation.append({"role": "user", "content": prompt})
+        time.sleep(3)  # rate limit protection
 
-        url = "https://api.anthropic.com/v1/messages"
+        try:
+            api_key = os.getenv('ANTHROPIC_API_KEY')
+            if not api_key:
+                raise Exception("ANTHROPIC_API_KEY environment variable not set")
 
-        tools = [
-            {
-                "name": "write_file",
-                "description": f"Write complete contents to {self.filename}. Always provide the entire file content, not partial updates.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "content": {"type": "string", "description": "Complete file contents to write"}
-                    },
-                    "required": ["content"]
-                }
-            },
-            {
-                "name": "read_file",
-                "description": "Read the contents of a file",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "filepath": {"type": "string", "description": "Path to the file to read"}
-                    },
-                    "required": ["filepath"]
-                }
-            },
-            {
-                "name": "generate_random_number",
-                "description": "Generate a random number between min_val and max_val",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "min_val": {"type": "integer", "description": "Minimum value (default: 1)"},
-                        "max_val": {"type": "integer", "description": "Maximum value (default: 100)"}
+            # Add user message to conversation
+            self.conversation.append({"role": "user", "content": prompt})
+
+            url = "https://api.anthropic.com/v1/messages"
+
+            tools = [
+                {
+                    "name": "write_file",
+                    "description": f"Write complete contents to {self.filename}. Always provide the entire file content, not partial updates.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string", "description": "Complete file contents to write"}
+                        },
+                        "required": ["content"]
+                    }
+                },
+                {
+                    "name": "read_file",
+                    "description": "Read the contents of a file",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {"type": "string", "description": "Path to the file to read"}
+                        },
+                        "required": ["filepath"]
+                    }
+                },
+                {
+                    "name": "generate_random_number",
+                    "description": "Generate a random number between min_val and max_val",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "min_val": {"type": "integer", "description": "Minimum value (default: 1)"},
+                            "max_val": {"type": "integer", "description": "Maximum value (default: 100)"}
+                        }
+                    }
+                },
+                {
+                    "name": "run_script",
+                    "description": "Run a Python script and return the output. If no script_path is provided, runs the file being edited.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "script_path": {"type": "string", "description": "Path to the Python script to run (optional, defaults to the file being edited)"},
+                            "args": {"type": "array", "items": {"type": "string"}, "description": "Command line arguments to pass to the script (optional)"}
+                        }
                     }
                 }
+            ]
+
+            data = {
+                "model": MODEL,
+                "max_tokens": MAX_TOKENS,
+                "messages": self.get_messages_with_file_context(),
+                "tools": tools
             }
-        ]
 
-        data = {
-            "model": "claude-3-sonnet-20240229",
-            "max_tokens": 1024,
-            "messages": self.get_messages_with_file_context(),
-            "tools": tools
-        }
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": "[REDACTED]",
+                "anthropic-version": "2023-06-01"
+            }
 
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": "[REDACTED]",
-            "anthropic-version": "2023-06-01"
-        }
+            log_request = {
+                "url": url,
+                "headers": headers,
+                "data": data
+            }
 
-        log_request = {
-            "url": url,
-            "headers": headers,
-            "data": data
-        }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(data).encode('utf-8'),
+                headers={**headers, "x-api-key": api_key}
+            )
 
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode('utf-8'),
-            headers={**headers, "x-api-key": api_key}
-        )
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                self.log_api_call(log_request, result, "main")
 
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            self.log_api_call(log_request, result, "main")
+                if self.verbose:
+                    print(f"[DEBUG] Response type: {result['content'][0]['type']}")
 
-            if self.verbose:
-                print(f"[DEBUG] Response type: {result['content'][0]['type']}")
+                # Look for tool use in any content block
+                tool_calls = []
+                text_content = []
 
-            # Look for tool use in any content block
-            tool_calls = []
-            text_content = []
+                for content_block in result["content"]:
+                    if content_block["type"] == "text":
+                        text_content.append(content_block["text"])
+                    elif content_block["type"] == "tool_use":
+                        tool_calls.append(content_block)
 
-            for content_block in result["content"]:
-                if content_block["type"] == "text":
-                    text_content.append(content_block["text"])
-                elif content_block["type"] == "tool_use":
-                    tool_calls.append(content_block)
+                # Add assistant message with full content
+                self.conversation.append({"role": "assistant", "content": result["content"]})
 
-            # Add assistant message with full content
-            self.conversation.append({"role": "assistant", "content": result["content"]})
+                if tool_calls:
+                    self.log_tool(f"Claude requested {len(tool_calls)} tool(s)")
 
-            if tool_calls:
-                self.log_tool(f"Claude requested {len(tool_calls)} tool(s)")
+                    # Execute first tool call only (avoiding multi-tool complexity)
+                    tool_call = tool_calls[0]
+                    tool_result = self.execute_tool(tool_call["name"], tool_call["input"])
 
-                # Execute first tool call only (avoiding multi-tool complexity)
-                tool_call = tool_calls[0]
-                tool_result = self.execute_tool(tool_call["name"], tool_call["input"])
+                    # Add tool result
+                    self.conversation.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tool_call["id"],
+                            "content": str(tool_result)
+                        }]
+                    })
 
-                # Add tool result
-                self.conversation.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": tool_call["id"],
-                        "content": str(tool_result)
-                    }]
-                })
+                    # Continue conversation
+                    return self.call_claude_continue()
+                else:
+                    # Just text response
+                    return "\n".join(text_content)
 
-                # Continue conversation
-                return self.call_claude_continue()
-            else:
-                # Just text response
-                return "\n".join(text_content)
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8')
+            print(f"HTTP Error {e.code}: {e.reason}")
+            print(f"Response body: {error_body}")
+            raise Exception(f"API Error {e.code}: {error_body}")
+        except Exception as e:
+            print(f"Exception in call_claude: {type(e).__name__}: {str(e)}")
+            print(f"Traceback: {traceback.format_exc()}")
+            raise
 
     def call_claude_continue(self):
         """Continue conversation after tool use"""
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-        url = "https://api.anthropic.com/v1/messages"
+        time.sleep(3)  # rate limit protection
 
-        data = {
-            "model": "claude-3-sonnet-20240229",
-            "max_tokens": 1024,
-            "messages": self.get_messages_with_file_context()
-        }
+        try:
+            api_key = os.getenv('ANTHROPIC_API_KEY')
+            url = "https://api.anthropic.com/v1/messages"
 
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": "[REDACTED]",
-            "anthropic-version": "2023-06-01"
-        }
+            data = {
+                "model": MODEL,
+                "max_tokens": MAX_TOKENS,
+                "messages": self.get_messages_with_file_context()
+            }
 
-        log_request = {
-            "url": url,
-            "headers": headers,
-            "data": data
-        }
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": "[REDACTED]",
+                "anthropic-version": "2023-06-01"
+            }
 
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode('utf-8'),
-            headers={**headers, "x-api-key": api_key}
-        )
+            log_request = {
+                "url": url,
+                "headers": headers,
+                "data": data
+            }
 
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            self.log_api_call(log_request, result, "continue")
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(data).encode('utf-8'),
+                headers={**headers, "x-api-key": api_key}
+            )
 
-            if not result["content"]:
-                if self.verbose:
-                    print("[DEBUG] Empty content in continue response")
-                return "Tool execution completed."
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                self.log_api_call(log_request, result, "continue")
 
-            text_parts = []
-            for content_block in result["content"]:
-                if content_block["type"] == "text":
-                    text_parts.append(content_block["text"])
+                if not result["content"]:
+                    if self.verbose:
+                        print("[DEBUG] Empty content in continue response")
+                    return "Tool execution completed."
 
-            assistant_response = "\n".join(text_parts) if text_parts else "Tool execution completed."
-            self.conversation.append({"role": "assistant", "content": result["content"]})
-            return assistant_response
+                text_parts = []
+                for content_block in result["content"]:
+                    if content_block["type"] == "text":
+                        text_parts.append(content_block["text"])
+
+                assistant_response = "\n".join(text_parts) if text_parts else "Tool execution completed."
+                self.conversation.append({"role": "assistant", "content": result["content"]})
+                return assistant_response
+
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8')
+            print(f"HTTP Error {e.code}: {e.reason}")
+            print(f"Response body: {error_body}")
+            raise Exception(f"API Error {e.code}: {error_body}")
+        except Exception as e:
+            print(f"Exception in call_claude_continue: {type(e).__name__}: {str(e)}")
+            print(f"Traceback: {traceback.format_exc()}")
+            raise
 
     def run(self):
         print(f"Claude Coding Agent - Working on: {self.filename}")
