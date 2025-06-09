@@ -53,11 +53,30 @@ class CodingAgent:
 
         system_message = {
             "role": "user",
-            "content": f"You are working on the file: {self.filename}\n\nCurrent file contents:\n```python\n{file_contents}\n```\n\nPlease help me work on this file."
+            "content": f"""You are working on the file: {self.filename}
+
+Current file contents:
+```python
+{file_contents}
+```
+
+When you suggest changes to the code, please use the write_file tool to update the entire file contents. Always provide complete, working code - never partial updates or diffs. The file should be ready to run after your changes."""
         }
 
         # Return system message + conversation history
         return [system_message] + self.conversation
+
+    def write_file(self, content):
+        """Tool: Write complete contents to the target file"""
+        try:
+            with open(self.filename, 'w', encoding='utf-8') as f:
+                f.write(content)
+            self.log_tool(f"write_file({self.filename}) -> {len(content)} characters written")
+            return f"Successfully wrote {len(content)} characters to {self.filename}"
+        except Exception as e:
+            error_msg = f"Error writing to {self.filename}: {str(e)}"
+            self.log_tool(error_msg)
+            return error_msg
 
     def read_file(self, filepath):
         """Tool: Read contents of a file"""
@@ -85,7 +104,10 @@ class CodingAgent:
         """Execute a tool and return the result"""
         self.log_tool(f"Executing tool: {tool_name} with params: {parameters}")
 
-        if tool_name == "read_file":
+        if tool_name == "write_file":
+            content = parameters.get("content", "")
+            return self.write_file(content)
+        elif tool_name == "read_file":
             filepath = parameters.get("filepath", "")
             return self.read_file(filepath)
         elif tool_name == "generate_random_number":
@@ -107,6 +129,17 @@ class CodingAgent:
         url = "https://api.anthropic.com/v1/messages"
 
         tools = [
+            {
+                "name": "write_file",
+                "description": f"Write complete contents to {self.filename}. Always provide the entire file content, not partial updates.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "Complete file contents to write"}
+                    },
+                    "required": ["content"]
+                }
+            },
             {
                 "name": "read_file",
                 "description": "Read the contents of a file",
