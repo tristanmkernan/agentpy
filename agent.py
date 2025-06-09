@@ -186,8 +186,20 @@ class CodingAgent:
             # Log this API call
             self.log_api_call(log_request, result, "continue")
 
-            assistant_response = result["content"][0]["text"]
-            self.conversation.append({"role": "assistant", "content": assistant_response})
+            # Handle empty content array
+            if not result["content"]:
+                if self.verbose:
+                    print("[DEBUG] Empty content in continue response")
+                return "Tool execution completed."
+
+            # Extract text from content blocks
+            text_parts = []
+            for content_block in result["content"]:
+                if content_block["type"] == "text":
+                    text_parts.append(content_block["text"])
+
+            assistant_response = "\n".join(text_parts) if text_parts else "Tool execution completed."
+            self.conversation.append({"role": "assistant", "content": result["content"]})
             return assistant_response
 
     def run(self):
