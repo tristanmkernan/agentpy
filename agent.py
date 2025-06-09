@@ -10,6 +10,8 @@ import time
 import traceback
 import subprocess
 import webbrowser
+import readline
+import atexit
 from datetime import datetime
 
 MAX_TOKENS = 1024 * 10
@@ -22,6 +24,48 @@ class CodingAgent:
         self.verbose = verbose
         self.log_file = f"{filename}.log.json"
         self.api_logs = []
+        
+        # Setup readline for better input handling
+        self.setup_readline()
+
+    def setup_readline(self):
+        """Setup readline for command history and line editing"""
+        try:
+            # Enable tab completion and set editing mode
+            readline.parse_and_bind('tab: complete')
+            readline.parse_and_bind('set editing-mode emacs')
+            
+            # History file in current directory, named after target file
+            self.history_file = f".{self.filename}.history"
+            
+            # Load existing history
+            if os.path.exists(self.history_file):
+                readline.read_history_file(self.history_file)
+                if self.verbose:
+                    print(f"[READLINE] Loaded history from {self.history_file}")
+            
+            # Set history length limit
+            readline.set_history_length(1000)
+            
+            # Register function to save history on exit
+            atexit.register(self.save_history)
+            
+        except ImportError:
+            if self.verbose:
+                print("[READLINE] readline module not available - basic input only")
+        except Exception as e:
+            if self.verbose:
+                print(f"[READLINE] Error setting up readline: {e}")
+
+    def save_history(self):
+        """Save command history to file"""
+        try:
+            readline.write_history_file(self.history_file)
+            if self.verbose:
+                print(f"[READLINE] Saved history to {self.history_file}")
+        except Exception as e:
+            if self.verbose:
+                print(f"[READLINE] Error saving history: {e}")
 
     def log_tool(self, message):
         """Log tool-related activity"""
@@ -462,16 +506,32 @@ When you suggest changes to the code, please use the write_file tool to update t
     def run(self):
         print(f"Claude Coding Agent - Working on: {self.filename}")
         print(f"API logs will be saved to: {self.log_file}")
+        print(f"Command history will be saved to: {self.history_file}")
         if self.verbose:
             print("Verbose mode enabled - tool logging active")
-        print("Enter your prompt (or 'quit' to exit):")
+        print("\nKeybindings:")
+        print("  Up/Down arrows: Navigate command history")
+        print("  Ctrl+A/Home: Beginning of line")
+        print("  Ctrl+E/End: End of line")
+        print("  Ctrl+K: Delete to end of line")
+        print("  Ctrl+U: Delete to beginning of line")
+        print("  Ctrl+R: Reverse search history")
+        print("\nEnter your prompt (or 'quit' to exit):")
 
         while True:
-            user_input = input("> ")
+            try:
+                user_input = input("> ")
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                break
 
             if user_input.lower() in ['quit', 'exit', 'q']:
                 print("Goodbye!")
                 break
+
+            # Skip empty inputs
+            if not user_input.strip():
+                continue
 
             try:
                 response = self.call_claude(user_input)
