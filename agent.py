@@ -6,17 +6,37 @@ import json
 import random
 import urllib.request
 import urllib.parse
+from datetime import datetime
 
 class CodingAgent:
     def __init__(self, filename, verbose=False):
         self.conversation = []
         self.filename = filename
         self.verbose = verbose
+        self.log_file = f"{filename}.log.json"
+        self.api_logs = []
 
     def log_tool(self, message):
         """Log tool-related activity"""
         if self.verbose:
             print(f"[TOOL] {message}")
+
+    def log_api_call(self, request_data, response_data, call_type="main"):
+        """Log API request and response to JSON file"""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "call_type": call_type,
+            "request": request_data,
+            "response": response_data
+        }
+        self.api_logs.append(log_entry)
+
+        # Write to file immediately
+        try:
+            with open(self.log_file, 'w') as f:
+                json.dump(self.api_logs, f, indent=2)
+        except Exception as e:
+            print(f"Failed to write log: {e}")
 
     def generate_random_number(self, min_val=1, max_val=100):
         """Tool: Generate a random number between min_val and max_val"""
@@ -69,18 +89,28 @@ class CodingAgent:
 
         headers = {
             "Content-Type": "application/json",
-            "x-api-key": api_key,
+            "x-api-key": "[REDACTED]",  # For logging
             "anthropic-version": "2023-06-01"
+        }
+
+        # Prepare request for logging (without real API key)
+        log_request = {
+            "url": url,
+            "headers": headers,
+            "data": data
         }
 
         req = urllib.request.Request(
             url,
             data=json.dumps(data).encode('utf-8'),
-            headers=headers
+            headers={**headers, "x-api-key": api_key}  # Use real key for actual request
         )
 
         with urllib.request.urlopen(req) as response:
             result = json.loads(response.read().decode('utf-8'))
+
+            # Log this API call
+            self.log_api_call(log_request, result, "main")
 
             if self.verbose:
                 print(f"[DEBUG] Response type: {result['content'][0]['type']}")
@@ -133,24 +163,36 @@ class CodingAgent:
 
         headers = {
             "Content-Type": "application/json",
-            "x-api-key": api_key,
+            "x-api-key": "[REDACTED]",
             "anthropic-version": "2023-06-01"
+        }
+
+        # Prepare request for logging
+        log_request = {
+            "url": url,
+            "headers": headers,
+            "data": data
         }
 
         req = urllib.request.Request(
             url,
             data=json.dumps(data).encode('utf-8'),
-            headers=headers
+            headers={**headers, "x-api-key": api_key}
         )
 
         with urllib.request.urlopen(req) as response:
             result = json.loads(response.read().decode('utf-8'))
+
+            # Log this API call
+            self.log_api_call(log_request, result, "continue")
+
             assistant_response = result["content"][0]["text"]
             self.conversation.append({"role": "assistant", "content": assistant_response})
             return assistant_response
 
     def run(self):
         print(f"Claude Coding Agent - Working on: {self.filename}")
+        print(f"API logs will be saved to: {self.log_file}")
         if self.verbose:
             print("Verbose mode enabled - tool logging active")
         print("Enter your prompt (or 'quit' to exit):")
