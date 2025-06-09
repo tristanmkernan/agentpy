@@ -5,52 +5,68 @@ import json
 import urllib.request
 import urllib.parse
 
-def call_claude(prompt):
-    """Send prompt to Claude API and return response"""
-    api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not api_key:
-        raise Exception("ANTHROPIC_API_KEY environment variable not set")
+class CodingAgent:
+    def __init__(self):
+        self.conversation = []
 
-    url = "https://api.anthropic.com/v1/messages"
+    def call_claude(self, prompt):
+        """Send prompt to Claude API with conversation history"""
+        api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            raise Exception("ANTHROPIC_API_KEY environment variable not set")
 
-    data = {
-        "model": "claude-3-sonnet-20240229",
-        "max_tokens": 1024,
-        "messages": [{"role": "user", "content": prompt}]
-    }
+        # Add user message to conversation
+        self.conversation.append({"role": "user", "content": prompt})
 
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01"
-    }
+        url = "https://api.anthropic.com/v1/messages"
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode('utf-8'),
-        headers=headers
-    )
+        data = {
+            "model": "claude-3-sonnet-20240229",
+            "max_tokens": 1024,
+            "messages": self.conversation
+        }
 
-    with urllib.request.urlopen(req) as response:
-        result = json.loads(response.read().decode('utf-8'))
-        return result["content"][0]["text"]
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01"
+        }
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode('utf-8'),
+            headers=headers
+        )
+
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            assistant_response = result["content"][0]["text"]
+
+            # Add assistant response to conversation
+            self.conversation.append({"role": "assistant", "content": assistant_response})
+
+            return assistant_response
+
+    def run(self):
+        print("Claude Coding Agent (with memory)")
+        print("Enter your prompt (or 'quit' to exit):")
+
+        while True:
+            user_input = input("> ")
+
+            if user_input.lower() in ['quit', 'exit', 'q']:
+                print("Goodbye!")
+                break
+
+            try:
+                response = self.call_claude(user_input)
+                print(f"\nClaude: {response}\n")
+            except Exception as e:
+                print(f"Error: {e}")
 
 def main():
-    print("Claude Coding Agent")
-    print("Enter your prompt (or 'quit' to exit):")
-
-    while True:
-        user_input = input("> ")
-
-        if user_input.lower() in ['quit', 'exit', 'q']:
-            print("Goodbye!")
-            break
-
-        try:
-            response = call_claude(user_input)
-            print(f"\nClaude: {response}\n")
-        except Exception as e:
-            print(f"Error: {e}")
+    agent = CodingAgent()
+    agent.run()
 
 if __name__ == "__main__":
     main()
