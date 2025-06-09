@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import json
 import urllib.request
 import urllib.parse
 
 class CodingAgent:
-    def __init__(self):
+    def __init__(self, filename):
         self.conversation = []
+        self.filename = filename
 
     def call_claude(self, prompt):
         """Send prompt to Claude API with conversation history"""
@@ -48,7 +50,7 @@ class CodingAgent:
             return assistant_response
 
     def run(self):
-        print("Claude Coding Agent (with memory)")
+        print(f"Claude Coding Agent - Working on: {self.filename}")
         print("Enter your prompt (or 'quit' to exit):")
 
         while True:
@@ -65,7 +67,12 @@ class CodingAgent:
                 print(f"Error: {e}")
 
 def main():
-    agent = CodingAgent()
+    if len(sys.argv) != 2:
+        print("Usage: python3 agent.py <filename>")
+        sys.exit(1)
+
+    filename = sys.argv[1]
+    agent = CodingAgent(filename)
     agent.run()
 
 if __name__ == "__main__":
